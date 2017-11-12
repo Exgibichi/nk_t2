@@ -76,7 +76,7 @@ public:
 uint64_t nLastBlockTx = 0;
 uint64_t nLastBlockSize = 0;
 uint32_t nLastCoinStakeSearchInterval = 0;
- 
+
 // We want to sort transactions by priority and fee, so:
 typedef boost::tuple<double, double, CTransaction*> TxPriority;
 class TxPriorityCompare
@@ -357,7 +357,7 @@ CBlock* CreateNewBlock(CWallet* pwallet, CTransaction *txCoinStake)
 
         if (!fProofOfStake)
         {
-            pblock->vtx[0].vout[0].nValue = GetProofOfWorkReward(pblock->nBits, nFees);
+            pblock->vtx[0].vout[0].nValue = GetProofOfWorkReward(pindexPrev->nHeight);
 
             if (fDebug)
                 printf("CreateNewBlock(): PoW reward %" PRIu64 "\n", pblock->vtx[0].vout[0].nValue);

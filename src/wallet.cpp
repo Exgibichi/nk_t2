@@ -1685,7 +1685,7 @@ void CWallet::AvailableCoins(vector<COutput>& vCoins, bool fOnlyConfirmed, const
 
             for (unsigned int i = 0; i < pcoin->vout.size(); i++) {
                 isminetype mine = IsMine(pcoin->vout[i]);
-                if (!(pcoin->IsSpent(i)) && mine != MINE_NO && 
+                if (!(pcoin->IsSpent(i)) && mine != MINE_NO &&
                     pcoin->vout[i].nValue >= nMinimumInputValue &&
                     (!coinControl || !coinControl->HasSelected() || coinControl->IsSelected((*it).first, i)))
                 {
@@ -2299,7 +2299,7 @@ bool CWallet::CreateCoinStake(uint256 &hashTx, uint32_t nOut, uint32_t nGenerati
 
     // The following combine threshold is important to security
     // Should not be adjusted if you don't understand the consequences
-    int64_t nCombineThreshold = GetProofOfWorkReward(GetLastBlockIndex(pindexBest, false)->nBits) / 3;
+    int64_t nCombineThreshold = GetProofOfWorkReward(GetLastBlockIndex(pindexBest, false)->nHeight) / 3;
 
     int64_t nBalance = GetBalance();
     int64_t nCredit = wtx.vout[nOut].nValue;
@@ -3173,4 +3173,3 @@ void CWallet::ClearOrphans()
     for(list<uint256>::const_iterator it = orphans.begin(); it != orphans.end(); ++it)
         EraseFromWallet(*it);
 }
-

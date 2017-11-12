@@ -33,17 +33,17 @@ unsigned int nTransactionsUpdated = 0;
 map<uint256, CBlockIndex*> mapBlockIndex;
 set<pair<COutPoint, unsigned int> > setStakeSeen;
 
-CBigNum bnProofOfWorkLimit(~uint256(0) >> 20); // "standard" scrypt target limit for proof of work, results with 0,000244140625 proof-of-work difficulty
+CBigNum bnProofOfWorkLimit(~uint256(0) >> 15); // "standard" scrypt target limit for proof of work, results with 0,000244140625 proof-of-work difficulty
 CBigNum bnProofOfStakeLegacyLimit(~uint256(0) >> 24); // proof of stake target limit from block #15000 and until 20 June 2013, results with 0,00390625 proof of stake difficulty
 CBigNum bnProofOfStakeLimit(~uint256(0) >> 27); // proof of stake target limit since 20 June 2013, equal to 0.03125  proof of stake difficulty
 CBigNum bnProofOfStakeHardLimit(~uint256(0) >> 30); // disabled temporarily, will be used in the future to fix minimal proof of stake difficulty at 0.25
-uint256 nPoWBase = uint256("0x00000000ffff0000000000000000000000000000000000000000000000000000"); // difficulty-1 target
+uint256 nPoWBase = uint256("0x0000ffff00000000000000000000000000000000000000000000000000000000"); // difficulty-1 target
 
 CBigNum bnProofOfWorkLimitTestNet(~uint256(0) >> 16);
 
-unsigned int nStakeMinAge = 30 * nOneDay; // 30 days as zero time weight
+unsigned int nStakeMinAge = 3 * nOneDay; // 30 days as zero time weight
 unsigned int nStakeMaxAge = 90 * nOneDay; // 90 days as full weight
-unsigned int nStakeTargetSpacing = 10 * 60; // 10-minute stakes spacing
+unsigned int nStakeTargetSpacing = 8 * 60; // 10-minute stakes spacing
 unsigned int nModifierInterval = 6 * nOneHour; // time to elapse before new modifier is computed
 
 int nCoinbaseMaturity = 500;
@@ -421,7 +421,7 @@ CTransaction::GetLegacySigOpCount() const
     unsigned int nSigOps = 0;
     if (!IsCoinBase())
     {
-        // Coinbase scriptsigs are never executed, so there is 
+        // Coinbase scriptsigs are never executed, so there is
         //    no sense in calculation of sigops.
         BOOST_FOREACH(const CTxIn& txin, vin)
         {
@@ -997,127 +997,42 @@ uint256 WantedByOrphan(const CBlock* pblockOrphan)
 // select stake target limit according to hard-coded conditions
 CBigNum inline GetProofOfStakeLimit(int nHeight, unsigned int nTime)
 {
-    if(fTestNet) // separate proof of stake target limit for testnet
-        return bnProofOfStakeLimit;
-    if(nTime > TARGETS_SWITCH_TIME) // 27 bits since 20 July 2013
-        return bnProofOfStakeLimit;
-    if(nHeight + 1 > 15000) // 24 bits since block 15000
-        return bnProofOfStakeLegacyLimit;
-    if(nHeight + 1 > 14060) // 31 bits since block 14060 until 15000
-        return bnProofOfStakeHardLimit;
-
     return bnProofOfWorkLimit; // return bnProofOfWorkLimit of none matched
 }
 
 // miner's coin base reward based on nBits
-int64_t GetProofOfWorkReward(unsigned int nBits, int64_t nFees)
+int64_t GetProofOfWorkReward(unsigned int nHeight)
 {
-    CBigNum bnSubsidyLimit = MAX_MINT_PROOF_OF_WORK;
-
-    CBigNum bnTarget;
-    bnTarget.SetCompact(nBits);
-    CBigNum bnTargetLimit = bnProofOfWorkLimit;
-    bnTargetLimit.SetCompact(bnTargetLimit.GetCompact());
-
-    // NovaCoin: subsidy is cut in half every 64x multiply of PoW difficulty
-    // A reasonably continuous curve is used to avoid shock to market
-    // (nSubsidyLimit / nSubsidy) ** 6 == bnProofOfWorkLimit / bnTarget
-    //
-    // Human readable form:
-    //
-    // nSubsidy = 100 / (diff ^ 1/6)
-    //
-    // Please note that we're using bisection to find an approximate solutuion
-    CBigNum bnLowerBound = CENT;
-    CBigNum bnUpperBound = bnSubsidyLimit;
-    while (bnLowerBound + CENT <= bnUpperBound)
-    {
-        CBigNum bnMidValue = (bnLowerBound + bnUpperBound) / 2;
-        if (bnMidValue * bnMidValue * bnMidValue * bnMidValue * bnMidValue * bnMidValue * bnTargetLimit > bnSubsidyLimit * bnSubsidyLimit * bnSubsidyLimit * bnSubsidyLimit * bnSubsidyLimit * bnSubsidyLimit * bnTarget)
-            bnUpperBound = bnMidValue;
-        else
-            bnLowerBound = bnMidValue;
+    int64_t nSubsidy = MAX_MINT_PROOF_OF_WORK;
+    if (nHeight <= 101) {
+        return 200 * nSubsidy;
     }
-
-    int64_t nSubsidy = bnUpperBound.getuint64();
-
-    nSubsidy = (nSubsidy / CENT) * CENT;
-    if (fDebug && GetBoolArg("-printcreation"))
-        printf("GetProofOfWorkReward() : create=%s nBits=0x%08x nSubsidy=%" PRId64 "\n", FormatMoney(nSubsidy).c_str(), nBits, nSubsidy);
-
-    return min(nSubsidy, MAX_MINT_PROOF_OF_WORK) + nFees;
+    int halvings = nHeight / 500000;
+    // Force block reward to zero when right shift is undefined.
+    if (halvings >= 64)
+        return 0;
+    // Subsidy is cut in half every 210,000 blocks which will occur approximately every 4 years.
+    nSubsidy >>= halvings;
+    return nSubsidy;
 }
 
 // miner's coin stake reward based on nBits and coin age spent (coin-days)
 int64_t GetProofOfStakeReward(int64_t nCoinAge, unsigned int nBits, int64_t nTime, bool bCoinYearOnly)
 {
-    int64_t nRewardCoinYear, nSubsidy, nSubsidyLimit = 10 * COIN;
-
-    // Stage 2 of emission process is mostly PoS-based.
-
-    CBigNum bnRewardCoinYearLimit = MAX_MINT_PROOF_OF_STAKE; // Base stake mint rate, 100% year interest
-    CBigNum bnTarget;
-    bnTarget.SetCompact(nBits);
-    CBigNum bnTargetLimit = GetProofOfStakeLimit(0, nTime);
-    bnTargetLimit.SetCompact(bnTargetLimit.GetCompact());
-
-    // A reasonably continuous curve is used to avoid shock to market
-
-    CBigNum bnLowerBound = 1 * CENT, // Lower interest bound is 1% per year
-        bnUpperBound = bnRewardCoinYearLimit, // Upper interest bound is 100% per year
-        bnMidPart, bnRewardPart;
-
-    while (bnLowerBound + CENT <= bnUpperBound)
-    {
-        CBigNum bnMidValue = (bnLowerBound + bnUpperBound) / 2;
-
-        //
-        // Reward for coin-year is cut in half every 8x multiply of PoS difficulty
-        //
-        // (nRewardCoinYearLimit / nRewardCoinYear) ** 3 == bnProofOfStakeLimit / bnTarget
-        //
-        // Human readable form: nRewardCoinYear = 1 / (posdiff ^ 1/3)
-        //
-
-        bnMidPart = bnMidValue * bnMidValue * bnMidValue;
-        bnRewardPart = bnRewardCoinYearLimit * bnRewardCoinYearLimit * bnRewardCoinYearLimit;
-
-        if (bnMidPart * bnTargetLimit > bnRewardPart * bnTarget)
-            bnUpperBound = bnMidValue;
-        else
-            bnLowerBound = bnMidValue;
-    }
-
-    nRewardCoinYear = bnUpperBound.getuint64();
-    nRewardCoinYear = min((nRewardCoinYear / CENT) * CENT, MAX_MINT_PROOF_OF_STAKE);
-
-    if(bCoinYearOnly)
-        return nRewardCoinYear;
-
-    nSubsidy = nCoinAge * nRewardCoinYear * 33 / (365 * 33 + 8);
-
-    // Set reasonable reward limit for large inputs
-    //
-    // This will stimulate large holders to use smaller inputs, that's good for the network protection
-
-    if (fDebug && GetBoolArg("-printcreation") && nSubsidyLimit < nSubsidy)
-        printf("GetProofOfStakeReward(): %s is greater than %s, coinstake reward will be truncated\n", FormatMoney(nSubsidy).c_str(), FormatMoney(nSubsidyLimit).c_str());
-
-    nSubsidy = min(nSubsidy, nSubsidyLimit);
-
-    if (fDebug && GetBoolArg("-printcreation"))
-        printf("GetProofOfStakeReward(): create=%s nCoinAge=%" PRId64 " nBits=%d\n", FormatMoney(nSubsidy).c_str(), nCoinAge, nBits);
-
+    static int64_t nRewardCoinYear = 8 * CENT;  // creation amount per coin-year
+    int64_t nSubsidy = nCoinAge * 33 / (365 * 33 + 8) * nRewardCoinYear;
+//    if (fDebug && GetBoolArg("-printcreation", false))
+    //    LogPrintf("GetProofOfStakeReward(): create=%s nCoinAge=%lld\n", FormatMoney(nSubsidy), nCoinAge);
     return nSubsidy;
 }
 
-static const int64_t nTargetTimespan = 7 * nOneDay;  // one week
+static const int64_t nTargetTimespan = 1 * nOneDay;  // one week
 
 // get proof of work blocks max spacing according to hard-coded conditions
 int64_t inline GetTargetSpacingWorkMax(int nHeight, unsigned int nTime)
 {
     if(nTime > TARGETS_SWITCH_TIME)
-        return 3 * nStakeTargetSpacing; // 30 minutes on mainNet since 20 Jul 2013 00:00:00
+        return 1 * nStakeTargetSpacing; // 30 minutes on mainNet since 20 Jul 2013 00:00:00
 
     if(fTestNet)
         return 3 * nStakeTargetSpacing; // 15 minutes on testNet
@@ -1764,7 +1679,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
 
     if (IsProofOfWork())
     {
-        int64_t nBlockReward = GetProofOfWorkReward(nBits, nFees);
+        int64_t nBlockReward = GetProofOfWorkReward(pindex->nHeight);
 
         // Check coinbase reward
         if (vtx[0].GetValueOut() > nBlockReward)
@@ -2056,7 +1971,7 @@ bool CBlock::SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew)
 // ppcoin: total coin age spent in transaction, in the unit of coin-days.
 // Only those coins meeting minimum age requirement counts. As those
 // transactions not in main chain are not currently indexed so we
-// might not find out about their coin age. Older transactions are 
+// might not find out about their coin age. Older transactions are
 // guaranteed to be in main chain by sync-checkpoint. This rule is
 // introduced to help nodes establish a consistent view of the coin
 // age (trust score) of competing branches.
@@ -2227,7 +2142,7 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
 
     if (fProofOfStake)
     {
-        // Proof-of-STake related checkings. Note that we know here that 1st transactions is coinstake. We don't need 
+        // Proof-of-STake related checkings. Note that we know here that 1st transactions is coinstake. We don't need
         //   check the type of 1st transaction because it's performed earlier by IsProofOfStake()
 
         // nNonce must be zero for proof-of-stake blocks
@@ -2267,7 +2182,7 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
             return DoS(50, error("CheckBlock() : coinbase timestamp is too late"));
     }
 
-    // Iterate all transactions starting from second for proof-of-stake block 
+    // Iterate all transactions starting from second for proof-of-stake block
     //    or first for proof-of-work block
     for (unsigned int i = fProofOfStake ? 2 : 1; i < vtx.size(); i++)
     {
@@ -2786,24 +2701,47 @@ bool LoadBlockIndex(bool fAllowNew)
         //    CTxOut(empty)
         //  vMerkleTree: 4cb33b3b6a
 
-        const string strTimestamp = "https://bitcointalk.org/index.php?topic=134179.msg1502196#msg1502196";
+        const string strTimestamp = "Enterneko 21/10/2017";
         CTransaction txNew;
-        txNew.nTime = 1360105017;
+        txNew.nTime = 1508535050;
         txNew.vin.resize(1);
         txNew.vout.resize(1);
         txNew.vin[0].scriptSig = CScript() << 486604799 << CBigNum(9999) << vector<unsigned char>(strTimestamp.begin(), strTimestamp.end());
+        txNew.vout[0].nValue = 0;
         txNew.vout[0].SetEmpty();
         CBlock block;
         block.vtx.push_back(txNew);
         block.hashPrevBlock = 0;
         block.hashMerkleRoot = block.BuildMerkleTree();
         block.nVersion = 1;
-        block.nTime    = 1360105017;
-        block.nBits    = bnProofOfWorkLimit.GetCompact();
-        block.nNonce   = !fTestNet ? 1575379 : 46534;
+        block.nTime    = 1508535053;
+        block.nBits    = 0x1f00ffff;
+        block.nNonce   = !fTestNet ? 97121 : 46534;
+        if (false) {
 
+            /*
+            new mainnet genesis hash: CBlock(hash=0000580a864fa09315c854185d7bbbb78260a69bf5a087e690b1c9c2526fe4da, ver=1, hashPrevBlock=0000000000000000000000000000000000000000000000000000000000000000, hashMerkleRoot=8db586d27703f1736c8c41322745ed82acd81fa7fab0e7215b7e1b0899277496, nTime=1508535054, nBits=1f00ffff, nNonce=26039, vtx=1)
+            Coinbase(hash=8db586d277, nTime=1508535050, ver=1, vin.size=1, vout.size=1, nLockTime=0)
+            CTxIn(COutPoint(0000000000, 4294967295), coinbase 04ffff001d020f2714456e7465726e656b6f2032312f31302f32303137)
+            CTxOut(nValue=0.000000, scriptPubKey=)
+
+            vMerkleTree:  8db586d27703f1736c8c41322745ed82acd81fa7fab0e7215b7e1b0899277496
+
+            */
+            //LogPrintf("%s\n","recalculating params for mainnet.\n");
+        //    LogPrintf("old mainnet genesis nonce: %s\n", genesis.ToString().c_str());
+            CBlock b;
+            b.nBits    = 0x1f00ffff;
+            //uint256 hashTarget = uint256().SetCompact(0x1f00ffff);
+            // deliberately empty for loop finds nonce value.
+            uint256 nPoWBase = uint256("0x0000ffff00000000000000000000000000000000000000000000000000000000"); // difficulty-1 target
+            for(block.nNonce = 0; block.GetHash() > nPoWBase; block.nNonce++){ }
+             block.print();
+        //    LogPrintf("new mainnet genesis hash: %s\n", genesis.ToString().c_str());
+
+        }
         //// debug print
-        assert(block.hashMerkleRoot == uint256("0x4cb33b3b6a861dcbc685d3e614a9cafb945738d6833f182855679f2fad02057b"));
+        assert(block.hashMerkleRoot == uint256("8db586d27703f1736c8c41322745ed82acd81fa7fab0e7215b7e1b0899277496"));
         block.print();
         assert(block.GetHash() == (!fTestNet ? hashGenesisBlock : hashGenesisBlockTestNet));
         assert(block.CheckBlock());
@@ -3109,7 +3047,7 @@ bool static AlreadyHave(CTxDB& txdb, const CInv& inv)
 // The message start string is designed to be unlikely to occur in normal data.
 // The characters are rarely used upper ASCII, not valid as UTF-8, and produce
 // a large 4-byte int at any alignment.
-unsigned char pchMessageStart[4] = { 0xe4, 0xe8, 0xe9, 0xe5 };
+unsigned char pchMessageStart[4] = { 0xbb, 0xf1, 0xc9, 0xef };
 
 bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
 {
@@ -3419,7 +3357,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
                     if (inv.hash == pfrom->hashContinue)
                     {
                         // ppcoin: send latest proof-of-work block to allow the
-                        // download node to accept as orphan (proof-of-stake 
+                        // download node to accept as orphan (proof-of-stake
                         // block might be rejected by stake connection check)
                         vector<CInv> vInv;
                         vInv.push_back(CInv(MSG_BLOCK, GetLastBlockIndex(pindexBest, false)->GetBlockHash()));
@@ -3632,8 +3570,8 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
 
     // This asymmetric behavior for inbound and outbound connections was introduced
     // to prevent a fingerprinting attack: an attacker can send specific fake addresses
-    // to users' AddrMan and later request them by sending getaddr messages. 
-    // Making users (which are behind NAT and can only make outgoing connections) ignore 
+    // to users' AddrMan and later request them by sending getaddr messages.
+    // Making users (which are behind NAT and can only make outgoing connections) ignore
     // getaddr message mitigates the attack.
     else if ((strCommand == "getaddr") && (pfrom->fInbound))
     {

@@ -11,10 +11,13 @@ USE_IPV6:=1
 LINK:=$(CXX)
 ARCH:=$(shell uname -m)
 
-DEFS=-DBOOST_SPIRIT_THREADSAFE -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+DEFS=-I/usr/local/openssl-1.0/include -O2 -I/usr/local/include -O2 -I/usr/include -O2
+LIBS=-L/usr/local/openssl-1.0/lib -L/usr/local/lib  -L/usr/lib
+
+DEFS +=-DBOOST_SPIRIT_THREADSAFE -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
 
 DEFS += $(addprefix -I,$(CURDIR) $(CURDIR)/obj $(BOOST_INCLUDE_PATH) $(BDB_INCLUDE_PATH) $(OPENSSL_INCLUDE_PATH))
-LIBS = $(addprefix -L,$(BOOST_LIB_PATH) $(BDB_LIB_PATH) $(OPENSSL_LIB_PATH))
+LIBS += $(addprefix -L,$(BOOST_LIB_PATH) $(BDB_LIB_PATH) $(OPENSSL_LIB_PATH))
 
 LMODE = dynamic
 LMODE2 = dynamic
